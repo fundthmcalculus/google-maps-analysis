@@ -145,13 +145,13 @@ def ECEF_to_ENU(coords: np.ndarray) -> np.ndarray:
                               [cosd(ref_lat) * cosd(ref_lon), cosd(ref_lat) * sind(ref_lon), sind(ref_lat)]])
     enu_coords = np.zeros(coords.shape)
     for ij in range(coords.shape[0]):
-        enu_coords[ij, :] = np.dot(mat_transform, coords[ij,:] - ref_XYZ)
+        enu_coords[ij, :] = np.dot(mat_transform, coords[ij, :] - ref_XYZ)
 
     return enu_coords
 
 
 def is_report(placemark) -> bool:
-    return get_extended_data(placemark.ExtendedData)['official'].upper() == 'REPORT'
+    return get_extended_data(placemark.ExtendedData).get('official', '').upper() == 'REPORT'
 
 
 def parse_file(file_name: str):
