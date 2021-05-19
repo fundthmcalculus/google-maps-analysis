@@ -37,9 +37,9 @@ def trail_length() -> None:
 
     logging.info(f"Parsing KML file={args.kmlfile}, summary columns={summary_columns}")
     doc = kmlutilities.parse_file(args.kmlfile)
-    trail_data, report_data, trails_report = kmlutilities.process_kml_data(doc)
-    kmlutilities.create_pivot_table_summaries(trail_data, summary_columns, args.reportfile)
-    kmlutilities.write_report_files(trail_data, report_data, trails_report, args.reportfile)
+    processor = kmlutilities.ReportProcessor()
+    processor.load(doc)
+    processor.generate_report(summary_columns, args.reportfile)
 
 
 def main():
@@ -60,7 +60,7 @@ def main():
         sys.exit(0)
     except Exception as err:
         logging.exception('Fatal error in main:', exc_info=True)
-        sys.exit(-1)
+        raise err
 
 
 if __name__ == '__main__':

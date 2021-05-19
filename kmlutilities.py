@@ -1,45 +1,134 @@
 import logging
 from typing import List, Dict, Tuple
 
+import lxml.etree
 import numpy as np
 import pandas as pd
 import pykml.parser
+import shapely.geometry
 from shapely.geometry import LineString, Polygon
+from pykml.factory import KML_ElementMaker as KML
 
 
-def process_kml_data(doc) -> Tuple[pd.DataFrame, pd.DataFrame, Dict[str, pd.DataFrame]]:
-    # Since KML is always a data table, every element has the same extended data
+class ReportProcessor:
     trail_columns = ['Trail Name', 'Length [mile]']
-    extended_columns = get_extended_data(doc.Document.Placemark[0].ExtendedData).keys()
-    trail_columns.extend(extended_columns)
-    trail_data = pd.DataFrame(columns=trail_columns)
-    report_data = pd.DataFrame(columns=['Region Name', 'Area [mi^2]'])
+    region_columns = ['Region Name', 'Area [mi^2]']
 
-    all_trails = [placemark for placemark in doc.Document.Placemark if hasattr(placemark, 'LineString')]
-    all_trails.extend([placemark for placemark in doc.Document.Placemark
-                       if hasattr(placemark, 'Polygon') and not is_report(placemark)])
-    report_polygons: List = [placemark for placemark in doc.Document.Placemark
-                             if hasattr(placemark, 'Polygon') and is_report(placemark)]
+    def __init__(self):
+        self.trail_columns = ReportProcessor.trail_columns
+        self.region_columns = ReportProcessor.region_columns
+        self.trail_data: pd.DataFrame = None
+        self.report_data: pd.DataFrame = None
+        self.trail_lines: List['Placemark'] = None
+        self.report_polygons: List['Placemark'] = None
+        self.trails_report: Dict[str, pd.DataFrame] = dict()
+        self.report_trail_geo: Dict[str, List[LineString]] = dict()
 
-    trail_data = calculate_trail_data(trail_data, all_trails)
-    report_data, trails_report = calculate_report_data(report_data, report_polygons, all_trails, trail_columns)
+        self.kml_styles: List = None
+        self.kml_style_maps: List = None
 
-    return trail_data, report_data, trails_report
+    def generate_report(self, summary_columns: List[str], report_file: str) -> None:
+        self.create_pivot_table_summaries(summary_columns, report_file)
+        self.write_report_files(report_file)
 
+    def load(self, doc) -> None:
+        self.kml_styles = [style for style in doc.Document.Style]
+        self.kml_style_maps = [stylemap for stylemap in doc.Document.StyleMap]
+        extended_columns = get_extended_data(doc.Document.Placemark[0].ExtendedData).keys()
+        self.trail_columns.extend(extended_columns)
+        self.trail_data = pd.DataFrame(columns=self.trail_columns)
+        self.report_data = pd.DataFrame(columns=self.region_columns)
 
-def create_pivot_table_summaries(trail_data: pd.DataFrame, summary_columns: List[str], report_file: str) -> None:
-    # Summarize by type, status, and official
-    for column in summary_columns:
-        summary_pivot_table(trail_data, column, report_file)
+        self.trail_lines = [placemark for placemark in doc.Document.Placemark if hasattr(placemark, 'LineString')]
+        # all_trails.extend([placemark for placemark in doc.Document.Placemark
+        #                    if hasattr(placemark, 'Polygon') and not is_report(placemark)])
+        self.report_polygons: List = [placemark for placemark in doc.Document.Placemark
+                                      if hasattr(placemark, 'Polygon') and is_report(placemark)]
 
+        self.trail_data, _ = self.__calculate_trail_data()
+        self.__calculate_report_data()
 
-def write_report_files(trail_data: pd.DataFrame, report_data: pd.DataFrame, trails_report: Dict[str, pd.DataFrame],
-                       report_file: str) -> None:
-    # Report polygons
-    report_data.to_csv(report_file.replace('.csv', f'_report_polygon.csv'), index=False)
-    trail_data.to_csv(report_file, index=False)
-    for (report_name, report) in trails_report.items():
-        report.to_csv(report_file.replace('.csv', f'_{report_name}.csv'), index=False)
+    def create_pivot_table_summaries(self, summary_columns: List[str], report_file: str) -> None:
+        # Summarize by type, status, and official
+        for column in summary_columns:
+            self.__summary_pivot_table(column, report_file)
+
+    def write_report_files(self, report_file: str) -> None:
+        # Report polygons
+        self.report_data.to_csv(report_file.replace('.csv', f'_report_polygon.csv'), index=False)
+        self.trail_data.to_csv(report_file, index=False)
+        for (report_name, report) in self.trails_report.items():
+            report.to_csv(report_file.replace('.csv', f'_{report_name}.csv'), index=False)
+            # Write the KML file
+            report_kml = KML.kml(
+                KML.Document(
+                    KML.name(report_name),
+                    *self.kml_styles,
+                    *self.kml_style_maps,
+                    *self.report_trail_geo[report_name]
+                )
+            )
+            with open(report_file.replace(".csv", f"_{report_name}.kml"), 'wb') as fid:
+                fid.write(lxml.etree.tostring(report_kml, pretty_print=True))
+
+    def __calculate_report_data(self) -> None:
+        for report in self.report_polygons:
+            report_name = report.name.text.strip()
+            logging.info(f'Polygon: {report_name}')
+            report_poly = get_shapely_shape(report)
+            row = [report_name, report_poly.area / 2589988.110336]
+            self.report_data = self.report_data.append(pd.DataFrame([row], columns=self.report_data.columns))
+
+            # Trim to shape and report
+            report, lines = self.__calculate_trail_data(report_poly)
+            self.trails_report[report_name] = report
+            self.report_trail_geo[report_name] = lines
+
+    def __calculate_trail_data(self, trim_poly=None) -> Tuple[pd.DataFrame, List['Placemark']]:
+        data = pd.DataFrame(columns=ReportProcessor.trail_columns)
+        lines = list()
+        if trim_poly:
+            a = 1
+        for ij, placemark in enumerate(self.trail_lines):
+            try:
+                placemark_name = placemark.name.text.strip()
+            except AttributeError:
+                placemark_name = f"Line #{ij+1}"
+            logging.info(f'Trail: {placemark_name} \\ {trim_poly}')
+            ext_data = get_extended_data(placemark.ExtendedData)
+            shapely_trail: LineString = get_shapely_shape(placemark)
+            shapely_trail = shapely_trail.intersection(trim_poly) if trim_poly else shapely_trail
+            distance = shapely_trail.length / 1609  # m -> mile
+            if distance == 0.0:
+                continue
+
+            row = [placemark_name, distance]
+            row.extend(ext_data.values())
+            data = data.append(pd.DataFrame([row], columns=data.columns))
+
+            # Generate the new placemark object
+            if trim_poly and distance > 0.0:
+                pm1 = KML.Placemark(
+                    KML.name(placemark_name),
+                    KML.description(""),
+                    placemark.styleUrl,
+                    placemark.ExtendedData,
+                    KML.LineString(
+                        KML.tessellate(1),
+                        KML.coordinates(
+                            get_kml_linestring(shapely_trail)
+                        )
+                    )
+                )
+                lines.append(pm1)
+
+        return data, lines
+
+    def __summary_pivot_table(self, pivot_column: str, report_file: str, data_column: str = 'Length [mile]') -> None:
+        official = self.trail_data.pivot_table(index=pivot_column, values=data_column, aggfunc='sum')
+        official = official.rename({'': '[BLANK]'})
+
+        official.to_csv(report_file.replace('.csv', f'_pivot_{pivot_column}.csv'))
 
 
 def get_shapely_shape(placemark):
@@ -52,50 +141,17 @@ def get_shapely_shape(placemark):
         raise NotImplementedError
 
 
-def calculate_report_data(report_data: pd.DataFrame, report_polygons: List, trail_shapes: List,
-                          trail_columns: List[str]) -> Tuple[pd.DataFrame, Dict[str, pd.DataFrame]]:
-    report_dict: Dict[str, pd.DataFrame] = dict()
-    for report in report_polygons:
-        report_name = report.name.text.strip()
-        logging.info(f'Polygon: {report_name}')
-        report_poly = get_shapely_shape(report)
-        row = [report_name, report_poly.area / 2589988.110336]
-        report_data = report_data.append(pd.DataFrame([row], columns=report_data.columns))
-
-        # Trim to shape and report
-        trails_report = pd.DataFrame(columns=trail_columns)
-        trails_report = calculate_trail_data(trails_report, trail_shapes, report_poly)
-        report_dict[report_name] = trails_report
-
-    return report_data, report_dict
-
-
-def calculate_trail_data(data, trail_lines, trim_poly=None):
-    for placemark in trail_lines:
-        placemark_name = placemark.name.text.strip()
-        logging.info(f'Trail: {placemark_name} \\ {trim_poly}')
-        ext_data = get_extended_data(placemark.ExtendedData)
-        shapely_trail = get_shapely_shape(placemark)
-        shapely_trail = shapely_trail.intersection(trim_poly) if trim_poly else shapely_trail
-        distance = shapely_trail.length / 1609  # m -> mile
-        if distance == 0.0:
-            continue
-
-        row = [placemark_name, distance]
-        row.extend(ext_data.values())
-        data = data.append(pd.DataFrame([row], columns=data.columns))
-    return data
-
-
-def summary_pivot_table(data: pd.DataFrame, pivot_column: str, report_file: str, data_column: str = 'Length [mile]') -> None:
-    official = data.pivot_table(index=pivot_column, values=data_column, aggfunc='sum')
-    official = official.rename({'': '[BLANK]'})
-
-    official.to_csv(report_file.replace('.csv', f'_pivot_{pivot_column}.csv'))
-
-
-def save_dataframe(file_path: str, data: pd.DataFrame) -> None:
-    data.to_csv(file_path, index=False)
+def get_kml_linestring(line: LineString) -> str:
+    if type(line) is shapely.geometry.MultiLineString:
+        coords = np.vstack([np.array(line.coords) for line in line.geoms])
+    else:
+        coords = np.array(line.coords)
+    geodetic_coordinates = ECEF_to_geodetic(ENU_to_ECEF(coords))
+    point_strings = []
+    for ij in range(geodetic_coordinates.shape[0]):
+        coords = geodetic_coordinates[ij, :]
+        point_strings.append(f"{coords[0]},{coords[1]},{coords[2]}")
+    return "\n".join(point_strings)
 
 
 def parse_coordinates(coordinates) -> np.ndarray:
@@ -107,11 +163,15 @@ def parse_coordinates(coordinates) -> np.ndarray:
     return coords
 
 
-def geodetic_to_ECEF(coords: np.ndarray) -> np.ndarray:
+def ecef_constants():
     a = 6378137.0  # m
     b = 6356752.3  # m
     e2 = 1 - b ** 2 / a ** 2
+    return a, b, e2
 
+
+def geodetic_to_ECEF(coords: np.ndarray) -> np.ndarray:
+    a, b, e2 = ecef_constants()
     N_phi = lambda phi: a / np.sqrt(1 - e2 * np.sin(np.radians(phi)) ** 2)
     X = lambda phi, lamb: N_phi(phi) * cosd(phi) * cosd(lamb)
     Y = lambda phi, lamb: N_phi(phi) * cosd(phi) * sind(lamb)
@@ -133,21 +193,69 @@ def geodetic_to_ECEF(coords: np.ndarray) -> np.ndarray:
     return ecef
 
 
-def ECEF_to_ENU(coords: np.ndarray) -> np.ndarray:
+def ECEF_to_geodetic(ecef_coords: np.ndarray) -> np.ndarray:
+    a, b, e2 = ecef_constants()
+    geodetic_coords = np.zeros(ecef_coords.shape)
+
+    X = ecef_coords[:, 0]
+    Y = ecef_coords[:, 1]
+    Z = ecef_coords[:, 2]
+
+    r2 = np.square(X) + np.square(Y)
+    r = np.sqrt(r2)
+    Z2 = np.square(Z)
+    er2 = (a**2 - b**2)/b**2
+    F = 54*b**2 * Z2
+    G = r2 + (1-e2)*Z2-e2*(a**2-b**2)
+    c = e2**2*F*r2 / np.power(G, 3)
+    s = np.power(1+c+np.sqrt(np.square(c) + 2*c), 1/3)
+    P = F / (3*np.square(s+1+1/s)*np.square (G))
+    Q = np.sqrt(1+2*e2**2*P)
+    r0 = -P*e2*r / (1+Q) + np.sqrt(1/2*a**2 * (1+1/Q) - P*(1-e2)*Z2 / (Q*(1+Q)) - 1/2*P*r2)
+    U = np.sqrt(np.square(r-e2*r0) + Z2)
+    V = np.sqrt(np.square(r-e2*r0) + (1-e2)*Z2)
+    z0 = b**2 * Z / (a*V)
+    h = U*(1-b**2 / (a*V))
+    phi = np.rad2deg(np.arctan((Z+er2*z0) / r))
+    lam = np.rad2deg(np.arctan2(Y, X))
+
+    return np.transpose(np.array([lam, phi, h]))
+
+
+def reference_point() -> Tuple[np.array, np.array, np.array]:
     # Reference point is Reser Bicycle Outfitters
     ref_lat = 39.09029667468314  # deg
     ref_lon = -84.49260971579635  # deg
     ref_alt = 156.058  # m
-    ref_XYZ = geodetic_to_ECEF(np.array([ref_lat, ref_lon, ref_alt]))
-    # Construct the matrix
+    ref_ecef = geodetic_to_ECEF(np.array([ref_lat, ref_lon, ref_alt]))
+
     mat_transform = np.array([[-sind(ref_lon), cosd(ref_lon), 0],
                               [-sind(ref_lat) * cosd(ref_lon), -sind(ref_lat) * sind(ref_lon), cosd(ref_lat)],
                               [cosd(ref_lat) * cosd(ref_lon), cosd(ref_lat) * sind(ref_lon), sind(ref_lat)]])
+
+    return np.array([ref_lat, ref_lon, ref_alt]), ref_ecef, mat_transform
+
+
+def ECEF_to_ENU(coords: np.ndarray) -> np.ndarray:
+    # Construct the matrix
+    ref_geo, ref_ecef, mat_transform = reference_point()
     enu_coords = np.zeros(coords.shape)
     for ij in range(coords.shape[0]):
-        enu_coords[ij, :] = np.dot(mat_transform, coords[ij, :] - ref_XYZ)
+        enu_coords[ij, :] = np.dot(mat_transform, coords[ij, :] - ref_ecef)
 
     return enu_coords
+
+
+def ENU_to_ECEF(enu_coords: np.array) -> np.array:
+    # Construct the matrix
+    ref_geo, ref_ecef, mat_transform = reference_point()
+    # Transpose to go the other way
+    mat_transform = np.transpose(mat_transform)
+    coords = np.zeros(enu_coords.shape)
+    for ij in range(enu_coords.shape[0]):
+        coords[ij, :] = np.dot(mat_transform, enu_coords[ij, :]) + ref_ecef
+
+    return coords
 
 
 def is_report(placemark) -> bool:
