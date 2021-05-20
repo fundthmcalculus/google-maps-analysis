@@ -20,6 +20,7 @@ def parse_arguments():
     parser.add_argument('command', help="Perform an action", choices=create_function_map().keys())
     parser.add_argument('--reportfile', help="Output csv file")
     parser.add_argument('--summarycolumns', help="Summary columns for report, separated by commas `,`")
+    parser.add_argument('--polygonformat', help="Output polygon data", default="kml", choices=["kml", "gpx"])
     group = parser.add_mutually_exclusive_group()
     group.add_argument('--kmlfile', help="Get the KML file")
     group.add_argument('--mapurl', help="Map URL")
@@ -37,7 +38,7 @@ def trail_length() -> None:
 
     logging.info(f"Parsing KML file={args.kmlfile}, summary columns={summary_columns}")
     doc = kmlutilities.parse_file(args.kmlfile)
-    processor = kmlutilities.ReportProcessor()
+    processor = kmlutilities.ReportProcessor(args.polygonformat)
     processor.load(doc)
     processor.generate_report(summary_columns, args.reportfile)
 

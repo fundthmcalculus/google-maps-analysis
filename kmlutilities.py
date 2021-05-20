@@ -1,6 +1,8 @@
+import datetime
 import logging
-from typing import List, Dict, Tuple
+from typing import List, Dict, Tuple, Generator
 
+import gpxpy as gpxpy
 import lxml.etree
 import numpy as np
 import pandas as pd
@@ -14,7 +16,8 @@ class ReportProcessor:
     trail_columns = ['Trail Name', 'Length [mile]']
     region_columns = ['Region Name', 'Area [mi^2]']
 
-    def __init__(self):
+    def __init__(self, polygon_format="kml"):
+        self.polygon_format = polygon_format
         self.trail_columns = ReportProcessor.trail_columns
         self.region_columns = ReportProcessor.region_columns
         self.trail_data: pd.DataFrame = None
@@ -22,7 +25,7 @@ class ReportProcessor:
         self.trail_lines: List['Placemark'] = None
         self.report_polygons: List['Placemark'] = None
         self.trails_report: Dict[str, pd.DataFrame] = dict()
-        self.report_trail_geo: Dict[str, List[LineString]] = dict()
+        self.report_trail_geo: Dict[str, List] = dict()
 
         self.kml_styles: List = None
         self.kml_style_maps: List = None
@@ -40,7 +43,7 @@ class ReportProcessor:
         self.report_data = pd.DataFrame(columns=self.region_columns)
 
         self.trail_lines = [placemark for placemark in doc.Document.Placemark if hasattr(placemark, 'LineString')]
-        # all_trails.extend([placemark for placemark in doc.Document.Placemark
+        # self.trail_lines.extend([placemark for placemark in doc.Document.Placemark
         #                    if hasattr(placemark, 'Polygon') and not is_report(placemark)])
         self.report_polygons: List = [placemark for placemark in doc.Document.Placemark
                                       if hasattr(placemark, 'Polygon') and is_report(placemark)]
@@ -60,16 +63,34 @@ class ReportProcessor:
         for (report_name, report) in self.trails_report.items():
             report.to_csv(report_file.replace('.csv', f'_{report_name}.csv'), index=False)
             # Write the KML file
-            report_kml = KML.kml(
-                KML.Document(
-                    KML.name(report_name),
-                    *self.kml_styles,
-                    *self.kml_style_maps,
-                    *self.report_trail_geo[report_name]
-                )
+            self.write_polygon_file(report_file, report_name)
+
+    def write_polygon_file(self, report_file, report_name):
+        if self.polygon_format == "kml":
+            self.__write_kml_file(report_name, report_file.replace(".csv", f"_{report_name}.kml"))
+        elif self.polygon_format == "gpx":
+            self.__write_gpx_file(report_name, report_file.replace(".csv", f"_{report_name}.gpx"))
+        else:
+            raise NotImplementedError(f"Unsupported polygon format {self.polygon_format}")
+
+    def __write_kml_file(self, report_name: str, output_file_name: str) -> None:
+        report_kml = KML.kml(
+            KML.Document(
+                KML.name(report_name),
+                *self.kml_styles,
+                *self.kml_style_maps,
+                *self.report_trail_geo[report_name]
             )
-            with open(report_file.replace(".csv", f"_{report_name}.kml"), 'wb') as fid:
-                fid.write(lxml.etree.tostring(report_kml, pretty_print=True))
+        )
+        with open(output_file_name, 'wb') as fid:
+            fid.write(lxml.etree.tostring(report_kml, pretty_print=True))
+
+    def __write_gpx_file(self, report_name: str, output_file_name: str) -> None:
+        report_gpx = gpxpy.gpx.GPX()
+        report_gpx.tracks.extend(self.report_trail_geo[report_name])
+
+        with open(output_file_name, 'w') as fid:
+            fid.write(report_gpx.to_xml(prettyprint=True))
 
     def __calculate_report_data(self) -> None:
         for report in self.report_polygons:
@@ -84,16 +105,11 @@ class ReportProcessor:
             self.trails_report[report_name] = report
             self.report_trail_geo[report_name] = lines
 
-    def __calculate_trail_data(self, trim_poly=None) -> Tuple[pd.DataFrame, List['Placemark']]:
+    def __calculate_trail_data(self, trim_poly=None) -> Tuple[pd.DataFrame, List]:
         data = pd.DataFrame(columns=ReportProcessor.trail_columns)
         lines = list()
-        if trim_poly:
-            a = 1
         for ij, placemark in enumerate(self.trail_lines):
-            try:
-                placemark_name = placemark.name.text.strip()
-            except AttributeError:
-                placemark_name = f"Line #{ij+1}"
+            placemark_name = placemark.name.text.strip()
             logging.info(f'Trail: {placemark_name} \\ {trim_poly}')
             ext_data = get_extended_data(placemark.ExtendedData)
             shapely_trail: LineString = get_shapely_shape(placemark)
@@ -108,27 +124,52 @@ class ReportProcessor:
 
             # Generate the new placemark object
             if trim_poly and distance > 0.0:
-                pm1 = KML.Placemark(
-                    KML.name(placemark_name),
-                    KML.description(""),
-                    placemark.styleUrl,
-                    placemark.ExtendedData,
-                    KML.LineString(
-                        KML.tessellate(1),
-                        KML.coordinates(
-                            get_kml_linestring(shapely_trail)
-                        )
-                    )
-                )
-                lines.append(pm1)
+                track = self.create_track(placemark, placemark_name, shapely_trail)
+                lines.append(track)
 
         return data, lines
+
+    def create_track(self, placemark, placemark_name, shapely_trail):
+        if self.polygon_format == "kml":
+            track = KML.Placemark(
+                KML.name(placemark_name),
+                KML.description(""),
+                placemark.styleUrl,
+                placemark.ExtendedData,
+                KML.LineString(
+                    KML.tessellate(1),
+                    KML.coordinates(
+                        get_kml_linestring(shapely_trail)
+                    )
+                )
+            )
+        elif self.polygon_format == "gpx":
+            track = gpxpy.gpx.GPXTrack()
+            track.name = placemark_name
+            segment = gpxpy.gpx.GPXTrackSegment()
+            track.segments.append(segment)
+            points = get_geodetic_coordinates(shapely_trail)
+            for jk in range(points.shape[0]):
+                lon = points[jk, 0]
+                lat = points[jk, 1]
+                alt = points[jk, 2]
+                segment.points.append(gpxpy.gpx.GPXTrackPoint(lat, lon, alt, time=next(self.__time_stamp())))
+        else:
+            raise NotImplementedError(f"Unsupported polygon format {self.polygon_format}")
+        return track
 
     def __summary_pivot_table(self, pivot_column: str, report_file: str, data_column: str = 'Length [mile]') -> None:
         official = self.trail_data.pivot_table(index=pivot_column, values=data_column, aggfunc='sum')
         official = official.rename({'': '[BLANK]'})
 
         official.to_csv(report_file.replace('.csv', f'_pivot_{pivot_column}.csv'))
+
+    @staticmethod
+    def __time_stamp() -> Generator:
+        start_time = datetime.datetime.now()
+        while True:
+            yield start_time
+            start_time += datetime.timedelta(seconds=1)
 
 
 def get_shapely_shape(placemark):
@@ -142,16 +183,21 @@ def get_shapely_shape(placemark):
 
 
 def get_kml_linestring(line: LineString) -> str:
-    if type(line) is shapely.geometry.MultiLineString:
-        coords = np.vstack([np.array(line.coords) for line in line.geoms])
-    else:
-        coords = np.array(line.coords)
-    geodetic_coordinates = ECEF_to_geodetic(ENU_to_ECEF(coords))
+    geodetic_coordinates = get_geodetic_coordinates(line)
     point_strings = []
     for ij in range(geodetic_coordinates.shape[0]):
         coords = geodetic_coordinates[ij, :]
         point_strings.append(f"{coords[0]},{coords[1]},{coords[2]}")
     return "\n".join(point_strings)
+
+
+def get_geodetic_coordinates(line):
+    if type(line) is shapely.geometry.MultiLineString:
+        coords = np.vstack([np.array(line.coords) for line in line.geoms])
+    else:
+        coords = np.array(line.coords)
+    geodetic_coordinates = ECEF_to_geodetic(ENU_to_ECEF(coords))
+    return geodetic_coordinates
 
 
 def parse_coordinates(coordinates) -> np.ndarray:
