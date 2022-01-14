@@ -33,7 +33,8 @@ def trail_length() -> None:
 
     if args.mapurl:
         r = requests.get(args.mapurl, allow_redirects=True)
-        open('kml_file.kml', 'wb').write(r.content)
+        with open('kml_file.kml', 'wb') as fid:
+            fid.write(r.content)
         args.kmlfile = 'kml_file.kml'
 
     logging.info(f"Parsing KML file={args.kmlfile}, summary columns={summary_columns}")
@@ -60,7 +61,7 @@ def main():
 
         sys.exit(0)
     except Exception as err:
-        logging.exception('Fatal error in main:', exc_info=True)
+        logging.exception('Fatal error in main')
         raise err
 
 

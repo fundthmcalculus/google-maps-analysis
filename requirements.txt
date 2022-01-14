@@ -1,6 +1,7 @@
 pykml~=0.2.0
 pandas~=1.2.3
-numpy~=1.20.2
+numpy~=1.21
 Shapely~=1.7.1
 gpxpy
 requests
+arcgis
