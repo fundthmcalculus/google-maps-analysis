@@ -9,22 +9,16 @@
   "summary_columns": [
     "official"
   ],
-  "arcgis_servers": [
-    "https://linkgis.org/arcgisweb/rest/services/CC_KC_PCTheme/MapServer/7",
-    "https://cagisonline.hamilton-co.org/arcgis/rest/services/COUNTYWIDE/Cadastral/MapServer/0"
-  ],
-  "layer_fields": [
-    "PIDN",
-    "PROPERTY_LOCATION_NUMBER",
-    "PROPERTY_LOCATION_STREET",
-    "PROPERTY_LOCATION_SUFFIX",
-    "PROPERTY_LOCATION_ZIP",
-    "OWNER_NAME_1",
-    "OWNER_NAME_2",
-    "OWNER_CARE_OF_NAME",
-    "OWNER_ADDRESS_1",
-    "OWNER_ADDRESS_2",
-    "OWNER_STATE",
-    "OWNER_ZIP_CODE"
-  ]
+  "arcgis_servers": {
+    "nky": "https://linkgis.org/arcgisweb/rest/services/CC_KC_PCTheme/MapServer/7",
+    "hamilton_co": "https://cagisonline.hamilton-co.org/arcgis/rest/services/COUNTYWIDE/Cadastral/MapServer/0"
+  },
+  "property_id_map": {
+    "nky": "PIDN",
+    "hamilton_co": "PARCELID"
+  },
+  "address_name_map": {
+    "nky": ["PROPERTY_LOCATION_NUMBER","PROPERTY_LOCATION_STREET","PROPERTY_LOCATION_SUFFIX","PROPERTY_LOCATION_ZIP"],
+    "hamilton_co": ["OWNAD1","OWNAD1A","OWNAD2"]
+  }
 }

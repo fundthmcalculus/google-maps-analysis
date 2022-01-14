@@ -29,7 +29,7 @@ def owner_report() -> None:
 
     logging.info(f"Parsing KML file={kml_file} for owner report")
     doc = kmlutilities.parse_file(kml_file)
-    processor = ArcGisProcessor(get_config('arcgis_servers'), get_config('layer_fields'), doc)
+    processor = ArcGisProcessor(get_config('arcgis_servers'), get_config('property_id_map'), get_config('address_name_map'), doc)
     processor.write_touched_properties_report(get_config('touched_properties_report'))
 
 
