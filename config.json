@@ -1,0 +1,30 @@
+{
+  "kml_file": "C:/Users/Scott/downloads/Jason Official.kml",
+  "report_file": "Jason Official_length.csv",
+  "touched_properties_report": "Jason Official_Touched Properties.csv",
+  "polygon_output_formats": [
+    "kml",
+    "gpx"
+  ],
+  "summary_columns": [
+    "official"
+  ],
+  "arcgis_servers": [
+    "https://linkgis.org/arcgisweb/rest/services/CC_KC_PCTheme/MapServer/7",
+    "https://cagisonline.hamilton-co.org/arcgis/rest/services/COUNTYWIDE/Cadastral/MapServer/0"
+  ],
+  "layer_fields": [
+    "PIDN",
+    "PROPERTY_LOCATION_NUMBER",
+    "PROPERTY_LOCATION_STREET",
+    "PROPERTY_LOCATION_SUFFIX",
+    "PROPERTY_LOCATION_ZIP",
+    "OWNER_NAME_1",
+    "OWNER_NAME_2",
+    "OWNER_CARE_OF_NAME",
+    "OWNER_ADDRESS_1",
+    "OWNER_ADDRESS_2",
+    "OWNER_STATE",
+    "OWNER_ZIP_CODE"
+  ]
+}

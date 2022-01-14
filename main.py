@@ -1,64 +1,60 @@
-import argparse
+import json
 import logging
 import os
 import sys
-from typing import Dict, Callable
-
-import requests
+from functools import cache
+from typing import Union, List
 
 import kmlutilities
+from arcgisconnection import ArcGisProcessor
 
 
-def create_function_map() -> Dict[str, Callable]:
-    return {
-            'traillength': trail_length
-            }
+@cache
+def load_config() -> dict:
+    with open('config.json') as fid:
+        return json.load(fid)
 
 
-def parse_arguments():
-    parser = argparse.ArgumentParser()
-    parser.add_argument('command', help="Perform an action", choices=create_function_map().keys())
-    parser.add_argument('--reportfile', help="Output csv file")
-    parser.add_argument('--summarycolumns', help="Summary columns for report, separated by commas `,`")
-    parser.add_argument('--polygonformat', help="Output polygon data", default="kml", choices=["kml", "gpx"])
-    group = parser.add_mutually_exclusive_group()
-    group.add_argument('--kmlfile', help="Get the KML file")
-    group.add_argument('--mapurl', help="Map URL")
-    return parser.parse_args()
+@cache
+def get_config(key: str = None) -> Union[dict, list, str]:
+    config = load_config()
+    if key is not None:
+        return config[key]
+    return config
+
+
+def owner_report() -> None:
+    # Parse the kml file
+    kml_file: str = get_config('kml_file')
+
+    logging.info(f"Parsing KML file={kml_file} for owner report")
+    doc = kmlutilities.parse_file(kml_file)
+    processor = ArcGisProcessor(get_config('arcgis_servers'), get_config('layer_fields'), doc)
+    processor.write_touched_properties_report(get_config('touched_properties_report'))
 
 
 def trail_length() -> None:
-    args = parse_arguments()
-    summary_columns = args.summarycolumns.split(',')
+    summary_columns: List[str] = get_config('summary_columns')
+    kml_file: str = get_config('kml_file')
 
-    if args.mapurl:
-        r = requests.get(args.mapurl, allow_redirects=True)
-        with open('kml_file.kml', 'wb') as fid:
-            fid.write(r.content)
-        args.kmlfile = 'kml_file.kml'
+    logging.info(f"Parsing KML file={kml_file} for trail length, summary columns={summary_columns}")
+    doc = kmlutilities.parse_file(kml_file)
 
-    logging.info(f"Parsing KML file={args.kmlfile}, summary columns={summary_columns}")
-    doc = kmlutilities.parse_file(args.kmlfile)
-    processor = kmlutilities.ReportProcessor(args.polygonformat)
-    processor.load(doc)
-    processor.generate_report(summary_columns, args.reportfile)
+    for polygon_format in get_config('polygon_output_formats'):
+        processor = kmlutilities.ReportProcessor(doc, polygon_format)
+        processor.generate_report(summary_columns, get_config('report_file'))
 
 
 def main():
     dir_path: str = os.path.dirname(os.path.realpath(__file__))
     log_file = os.path.join(dir_path, 'maps-analysis.log')
-    logging.basicConfig(filename=log_file,
-                        format='%(asctime)s:%(levelname)s:%(message)s',
-                        datefmt='%Y-%m-%d %H:%M:%S',
-                        filemode='w',
-                        level=logging.DEBUG)
+    logging.basicConfig(filename=log_file, format='%(asctime)s:%(levelname)s:%(message)s', datefmt='%Y-%m-%d %H:%M:%S',
+                        filemode='w', level=logging.DEBUG)
     logging.debug('Started')
     try:
-        args = parse_arguments()
-        func = create_function_map()[args.command]
-        func()
+        # trail_length()
+        owner_report()
         logging.debug('Finished')
-
         sys.exit(0)
     except Exception as err:
         logging.exception('Fatal error in main')
