@@ -1,6 +1,6 @@
 import datetime
 import logging
-from functools import cached_property
+from functools import cached_property, cache
 from typing import List, Dict, Tuple, Generator, Union
 from xml.etree.ElementTree import Element
 
@@ -29,8 +29,8 @@ class ReportProcessor:
         return [placemark for placemark in self.doc.Document.Placemark if hasattr(placemark, 'Polygon') and is_report(placemark)]
 
     @cached_property
-    def trail_geometry(self) -> List[Union[LineString, Polygon]]:
-        return [get_shapely_shape(p) for p in self.trail_lines]
+    def trail_geometry(self) -> Dict[str, LineString]:
+        return dict([(p.name.text.strip(), get_shapely_shape(p)) for p in self.trail_lines])
 
     @cached_property
     def kml_styles(self) -> List:
@@ -240,6 +240,13 @@ def parse_coordinates(coordinates) -> np.ndarray:
     return coords
 
 
+def parse_coordinates_tuple(coordinates: List[Tuple[float, float]]) -> np.ndarray:
+    coords = np.zeros((len(coordinates), 3))
+    for ij, coord in enumerate(coordinates):
+        coords[ij, :] = np.array([coord[1], coord[0], reference_altitude()])
+    return coords
+
+
 def ecef_constants():
     a = 6378137.0  # m
     b = 6356752.3  # m
@@ -272,7 +279,6 @@ def geodetic_to_ECEF(coords: np.ndarray) -> np.ndarray:
 
 def ECEF_to_geodetic(ecef_coords: np.ndarray) -> np.ndarray:
     a, b, e2 = ecef_constants()
-    geodetic_coords = np.zeros(ecef_coords.shape)
 
     X = ecef_coords[:, 0]
     Y = ecef_coords[:, 1]
@@ -298,12 +304,20 @@ def ECEF_to_geodetic(ecef_coords: np.ndarray) -> np.ndarray:
 
     return np.transpose(np.array([lam, phi, h]))
 
+def reference_latitude() -> float:
+    return 39.09029667468314  # deg
+def reference_longitude() -> float:
+    return -84.49260971579635  # deg
+def reference_altitude() -> float:
+    return 156.058  # m
 
+
+@cache
 def reference_point() -> Tuple[np.array, np.array, np.array]:
     # Reference point is Reser Bicycle Outfitters
-    ref_lat = 39.09029667468314  # deg
-    ref_lon = -84.49260971579635  # deg
-    ref_alt = 156.058  # m
+    ref_lat = reference_latitude()
+    ref_lon = reference_longitude()
+    ref_alt = reference_altitude()
     ref_ecef = geodetic_to_ECEF(np.array([ref_lat, ref_lon, ref_alt]))
 
     mat_transform = np.array([[-sind(ref_lon), cosd(ref_lon), 0],

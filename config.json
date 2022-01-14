@@ -1,6 +1,7 @@
 {
   "kml_file": "C:/Users/Scott/downloads/Jason Official.kml",
-  "report_file": "C:/Users/Scott/downloads/Jason Official_length.csv",
+  "report_file": "Jason Official_length.csv",
+  "touched_properties_report": "Jason Official_Touched Properties.csv",
   "polygon_output_formats": [
     "kml",
     "gpx"
@@ -9,7 +10,8 @@
     "official"
   ],
   "arcgis_servers": [
-    "https://linkgis.org/arcgisweb/rest/services/CC_KC_PCTheme/MapServer/7"
+    "https://linkgis.org/arcgisweb/rest/services/CC_KC_PCTheme/MapServer/7",
+    "https://cagisonline.hamilton-co.org/arcgis/rest/services/COUNTYWIDE/Cadastral/MapServer/0"
   ],
   "layer_fields": [
     "PIDN",

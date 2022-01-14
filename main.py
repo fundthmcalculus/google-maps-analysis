@@ -30,7 +30,7 @@ def owner_report() -> None:
     logging.info(f"Parsing KML file={kml_file} for owner report")
     doc = kmlutilities.parse_file(kml_file)
     processor = ArcGisProcessor(get_config('arcgis_servers'), get_config('layer_fields'), doc)
-    processor.load()
+    processor.write_touched_properties_report(get_config('touched_properties_report'))
 
 
 def trail_length() -> None:
@@ -55,7 +55,6 @@ def main():
         # trail_length()
         owner_report()
         logging.debug('Finished')
-
         sys.exit(0)
     except Exception as err:
         logging.exception('Fatal error in main')
