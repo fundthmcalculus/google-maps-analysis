@@ -2,7 +2,7 @@ import datetime
 import logging
 from typing import List, Dict, Tuple, Generator
 
-import gpxpy as gpxpy
+import gpxpy
 import lxml.etree
 import numpy as np
 import pandas as pd
@@ -42,7 +42,8 @@ class ReportProcessor:
         self.trail_data = pd.DataFrame(columns=self.trail_columns)
         self.report_data = pd.DataFrame(columns=self.region_columns)
 
-        self.trail_lines = [placemark for placemark in doc.Document.Placemark if hasattr(placemark, 'LineString')]
+        self.trail_lines = [placemark for placemark in doc.Document.Placemark if hasattr(placemark, 'LineString') and
+                            has_official_status(placemark)]
         # self.trail_lines.extend([placemark for placemark in doc.Document.Placemark
         #                    if hasattr(placemark, 'Polygon') and not is_report(placemark)])
         self.report_polygons: List = [placemark for placemark in doc.Document.Placemark
@@ -306,6 +307,10 @@ def ENU_to_ECEF(enu_coords: np.array) -> np.array:
 
 def is_report(placemark) -> bool:
     return get_extended_data(placemark.ExtendedData).get('official', '').upper() == 'REPORT'
+
+
+def has_official_status(placemark) -> bool:
+    return len(get_extended_data(placemark.ExtendedData).get('official').strip()) > 0
 
 
 def parse_file(file_name: str):

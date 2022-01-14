@@ -4,7 +4,7 @@ import os
 import sys
 from typing import Dict, Callable
 
-import requests as requests
+import requests
 
 import kmlutilities
 
