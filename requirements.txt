@@ -4,3 +4,4 @@ numpy~=1.21
 Shapely~=1.7.1
 gpxpy
 requests
+arcgis
